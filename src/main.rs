@@ -7,39 +7,48 @@ trait Reducible {
     fn reduce(&self, environment: Env) -> Expression;
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct Number(i32);
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 enum Boolean {
     True,
     False,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct LessThan {
     left: Box<Expression>,
     right: Box<Expression>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct Add {
     left: Box<Expression>,
     right: Box<Expression>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct Multiply {
     left: Box<Expression>,
     right: Box<Expression>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct Variable {
     name: String,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
+struct DoNothing;
+
+#[derive(Clone, Debug)]
+struct Assign {
+    name: String,
+    expression: Box<Expression>,
+}
+
+#[derive(Clone, Debug)]
 enum Expression {
     AddExpr(Add),
     MultiplyExpr(Multiply),
@@ -48,6 +57,9 @@ enum Expression {
     LessThanExpr(LessThan),
     VariableExpr(Variable),
     StrExpr(String),
+    DoNothingExpr(DoNothing),
+    AssignExpr((Assign, Env)),
+    TerminalExpr((DoNothing, Env)),
 }
 
 struct Machine {
@@ -57,16 +69,21 @@ struct Machine {
 
 impl Machine {
     fn step(&mut self) -> () {
-        self.expression = self.expression.reduce(self.environment.clone());
+	let s = self.expression.reduce(self.environment.clone());
+
+	match s.clone() {
+	    Expression::TerminalExpr((_, env)) => {self.environment = env; self.expression = s},
+	    expr @ _ => {self.expression = expr},
+	}
     }
 
     fn run(&mut self) -> () {
         while self.expression.is_reducible() {
-            println!("{}", self.expression);
+            println!("{}, {:?}", self.expression, self.environment);
             self.step()
         }
 
-        println!("{}", self.expression);
+        println!("{}, {:?}", self.expression, self.environment);
     }
 }
 
@@ -76,10 +93,13 @@ impl Reducible for Expression {
             Expression::AddExpr(_)
             | Expression::MultiplyExpr(_)
             | Expression::LessThanExpr(_)
-            | Expression::VariableExpr(_) => true,
-            Expression::NumberExpr(_) | Expression::BooleanExpr(_) | Expression::StrExpr(_) => {
-                false
-            }
+            | Expression::VariableExpr(_)
+            | Expression::AssignExpr(_) => true,
+            Expression::NumberExpr(_)
+            | Expression::BooleanExpr(_)
+            | Expression::StrExpr(_)
+            | Expression::DoNothingExpr(_)
+            | Expression::TerminalExpr(_) => false,
         }
     }
 
@@ -89,9 +109,7 @@ impl Reducible for Expression {
             Expression::MultiplyExpr(x) => Multiply::reduce(x, environment),
             Expression::LessThanExpr(x) => LessThan::reduce(x, environment),
             Expression::VariableExpr(x) => Variable::reduce(x, environment),
-            Expression::NumberExpr(x) => Expression::NumberExpr(x.clone()),
-            Expression::BooleanExpr(x) => Expression::BooleanExpr(x.clone()),
-            Expression::StrExpr(x) => Expression::StrExpr(x.clone()),
+            Expression::AssignExpr((x, _)) => Assign::reduce(x, environment),
             _ => panic!("Not Implemented"),
         }
     }
@@ -175,6 +193,24 @@ impl Variable {
         }
     }
 }
+
+impl Assign {
+    fn reduce(&self, mut environment: Env) -> Expression {
+        if self.expression.is_reducible() {
+            Expression::AssignExpr((
+                Assign {
+                    name: self.name.clone(),
+                    expression: Box::new(self.expression.reduce(environment.clone())),
+                },
+                environment,
+            ))
+        } else {
+            environment.insert(self.name.clone(), *self.expression.clone());
+            Expression::TerminalExpr((DoNothing {}, environment))
+        }
+    }
+}
+
 impl fmt::Display for Number {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.0)
@@ -214,6 +250,18 @@ impl fmt::Display for Variable {
     }
 }
 
+impl fmt::Display for DoNothing {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "do-nothing")
+    }
+}
+
+impl fmt::Display for Assign {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{} = {}", self.name, self.expression)
+    }
+}
+
 impl fmt::Display for Expression {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
@@ -223,7 +271,10 @@ impl fmt::Display for Expression {
             Expression::LessThanExpr(x) => write!(f, "{}", x),
             Expression::BooleanExpr(x) => write!(f, "{}", x),
             Expression::VariableExpr(x) => write!(f, "{}", x),
-            Expression::StrExpr(x) => write! {f, "{}", x},
+            Expression::StrExpr(x) => write!(f, "{}", x),
+            Expression::DoNothingExpr(x) => write!(f, "{}", x),
+            Expression::AssignExpr((x, _)) => write!(f, "{}", x),
+            Expression::TerminalExpr((x, _)) => write!(f, "{}", x),
         }
     }
 }
@@ -273,16 +324,29 @@ fn main() {
     };
 
     let mut env: Env = HashMap::new();
-    env.insert("x".to_string(), Expression::NumberExpr(Number(3)));
-    env.insert("y".to_string(), Expression::NumberExpr(Number(4)));
+    env.insert("x".to_string(), Expression::NumberExpr(Number(2)));
+    // env.insert("y".to_string(), Expression::NumberExpr(Number(4)));
 
-    let e = Expression::AddExpr(Add {
-        left: Box::new(Expression::VariableExpr(x)),
-        right: Box::new(Expression::VariableExpr(y)),
-    });
+    // let e = Expression::AddExpr(Add {
+    //     left: Box::new(Expression::VariableExpr(x)),
+    //     right: Box::new(Expression::VariableExpr(y)),
+    // });
+
+    let f = Expression::AssignExpr((
+        Assign {
+            name: "x".to_string(),
+            expression: Box::new(Expression::AddExpr(Add {
+                left: Box::new(Expression::VariableExpr(Variable {
+                    name: "x".to_string(),
+                })),
+                right: Box::new(Expression::NumberExpr(Number(1))),
+            })),
+        },
+        HashMap::new(),
+    ));
 
     let mut machine = Machine {
-        expression: e,
+        expression: f,
         environment: env,
     };
 
